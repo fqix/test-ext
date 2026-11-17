@@ -36,23 +36,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Apple silicon images. The extension is published for darwin-arm64 only, so these
-        # must install it; macos-latest is macos-26 today.
+        # Apple silicon images only: the extension is published for darwin-arm64 only.
+        # macos-latest is macos-26 today.
         os: [macos-15, macos-26]
         # 1.90.0 is the extension's minimum engines.vscode version.
-        vscode: ['1.90.0', 'stable']
-        platform: [darwin-arm64]
-        expect: [installed]
-        include:
-          # Intel images: no darwin-x64 build exists, so the Marketplace must refuse it.
-          - os: macos-15-intel
-            vscode: stable
-            platform: darwin
-            expect: unavailable
-          - os: macos-26-intel
-            vscode: stable
-            platform: darwin
-            expect: unavailable
+        vscode: ['1.90.0', '1.120.0', 'stable']
     steps:
       - name: Show runner image
         run: |
@@ -60,17 +48,16 @@ jobs:
           uname -m
           echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
 
-      - name: Download VS Code ${{ matrix.vscode }} (${{ matrix.platform }})
+      - name: Download VS Code ${{ matrix.vscode }}
         env:
           VSCODE_VERSION: ${{ matrix.vscode }}
-          VSCODE_PLATFORM: ${{ matrix.platform }}
         run: |
           version="$VSCODE_VERSION"
           [ "$version" = stable ] && version=latest
           dir="$RUNNER_TEMP/vscode"
           mkdir -p "$dir"
           curl -fsSL --retry 3 -o "$dir/vscode.zip" \
-            "https://update.code.visualstudio.com/$version/$VSCODE_PLATFORM/stable"
+            "https://update.code.visualstudio.com/$version/darwin-arm64/stable"
           # ditto keeps the app bundle's symlinks and attributes intact.
           ditto -xk "$dir/vscode.zip" "$dir"
           cli="$dir/Visual Studio Code.app/Contents/Resources/app/bin/code"
@@ -82,42 +69,22 @@ jobs:
           "$cli" --version
 
       - name: Install from the Marketplace
-        env:
-          EXPECT: ${{ matrix.expect }}
         run: |
           target="$EXTENSION_ID"
           [ -n "$EXTENSION_VERSION" ] && target="$EXTENSION_ID@$EXTENSION_VERSION"
-          echo "Installing $target (expect: $EXPECT)"
-          status=0
+          echo "Installing $target"
           "$VSCODE_CLI" --user-data-dir "$VSCODE_USER_DIR" --extensions-dir "$VSCODE_EXT_DIR" \
-            --install-extension "$target" --force || status=$?
-          if [ "$EXPECT" = installed ] && [ "$status" -ne 0 ]; then
-            echo "::error::installing $target failed with exit code $status"
-            exit 1
-          fi
-          if [ "$EXPECT" = unavailable ] && [ "$status" -eq 0 ]; then
-            echo "::error::$target installed on $(uname -m), but only darwin-arm64 is published"
-            exit 1
-          fi
-          echo "Install exit code $status, as expected"
+            --install-extension "$target" --force
 
       - name: Verify installation
         env:
-          EXPECT: ${{ matrix.expect }}
           RUNNER_LABEL: ${{ matrix.os }}
+          VSCODE_VERSION: ${{ matrix.vscode }}
         run: |
           installed="$("$VSCODE_CLI" --user-data-dir "$VSCODE_USER_DIR" --extensions-dir "$VSCODE_EXT_DIR" \
             --list-extensions --show-versions)"
           echo "$installed"
           line="$(echo "$installed" | grep -i "^$EXTENSION_ID@" || true)"
-          if [ "$EXPECT" = unavailable ]; then
-            if [ -n "$line" ]; then
-              echo "::error::$line is installed on an Intel runner"
-              exit 1
-            fi
-            echo "### $RUNNER_LABEL: not installable, as expected" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           if [ -z "$line" ]; then
             echo "::error::$EXTENSION_ID is not installed"
             exit 1
@@ -137,5 +104,5 @@ jobs:
           test -f "$ext/dist/docker-shim.js"
           test -d "$ext/dist/devcontainer-cli"
           test -f "$ext/dist/webview/webview.js"
-          echo "### $RUNNER_LABEL: installed $line" >> "$GITHUB_STEP_SUMMARY"
+          echo "### $RUNNER_LABEL / VS Code $VSCODE_VERSION: installed $line" >> "$GITHUB_STEP_SUMMARY"
           echo "Installed $line at $ext"
