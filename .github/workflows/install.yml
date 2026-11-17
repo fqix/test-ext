@@ -1,0 +1,92 @@
+name: Install
+
+# Installs fqix.apple-container-tools from the VS Code Marketplace into a clean, freshly
+# downloaded VS Code on Apple silicon and checks what landed on disk.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Extension version to install (empty = latest on the Marketplace)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXTENSION_ID: fqix.apple-container-tools
+  EXTENSION_VERSION: ${{ inputs.version }}
+
+jobs:
+  install:
+    name: VS Code ${{ matrix.vscode }}
+    # The extension is published for darwin-arm64 only; macos-latest is Apple silicon.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.90.0 is the extension's minimum engines.vscode version.
+        vscode: ['1.90.0', 'stable']
+    steps:
+      - name: Download VS Code ${{ matrix.vscode }}
+        env:
+          VSCODE_VERSION: ${{ matrix.vscode }}
+        run: |
+          version="$VSCODE_VERSION"
+          [ "$version" = stable ] && version=latest
+          dir="$RUNNER_TEMP/vscode"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/vscode.zip" \
+            "https://update.code.visualstudio.com/$version/darwin-arm64/stable"
+          # ditto keeps the app bundle's symlinks and attributes intact.
+          ditto -xk "$dir/vscode.zip" "$dir"
+          cli="$dir/Visual Studio Code.app/Contents/Resources/app/bin/code"
+          test -x "$cli"
+          echo "VSCODE_CLI=$cli" >> "$GITHUB_ENV"
+          # Separate profile and extensions directories keep the runner's state out of the check.
+          echo "VSCODE_USER_DIR=$RUNNER_TEMP/vscode-user" >> "$GITHUB_ENV"
+          echo "VSCODE_EXT_DIR=$RUNNER_TEMP/vscode-extensions" >> "$GITHUB_ENV"
+          "$cli" --version
+
+      - name: Install from the Marketplace
+        run: |
+          target="$EXTENSION_ID"
+          [ -n "$EXTENSION_VERSION" ] && target="$EXTENSION_ID@$EXTENSION_VERSION"
+          echo "Installing $target"
+          "$VSCODE_CLI" --user-data-dir "$VSCODE_USER_DIR" --extensions-dir "$VSCODE_EXT_DIR" \
+            --install-extension "$target" --force
+
+      - name: Verify installation
+        run: |
+          installed="$("$VSCODE_CLI" --user-data-dir "$VSCODE_USER_DIR" --extensions-dir "$VSCODE_EXT_DIR" \
+            --list-extensions --show-versions)"
+          echo "$installed"
+          line="$(echo "$installed" | grep -i "^$EXTENSION_ID@" || true)"
+          if [ -z "$line" ]; then
+            echo "::error::$EXTENSION_ID is not installed"
+            exit 1
+          fi
+          if [ -n "$EXTENSION_VERSION" ] && [ "$line" != "$EXTENSION_ID@$EXTENSION_VERSION" ]; then
+            echo "::error::installed $line, expected $EXTENSION_ID@$EXTENSION_VERSION"
+            exit 1
+          fi
+          # The Marketplace must have served the darwin-arm64 build with its runtime files.
+          ext="$(ls -d "$VSCODE_EXT_DIR"/"$EXTENSION_ID"-*-darwin-arm64 2>/dev/null | head -n 1)"
+          if [ -z "$ext" ]; then
+            echo "::error::no darwin-arm64 build of $EXTENSION_ID in $VSCODE_EXT_DIR"
+            ls -la "$VSCODE_EXT_DIR"
+            exit 1
+          fi
+          test -f "$ext/dist/extension.js"
+          test -f "$ext/dist/docker-shim.js"
+          test -d "$ext/dist/devcontainer-cli"
+          test -f "$ext/dist/webview/webview.js"
+          echo "### Installed $line" >> "$GITHUB_STEP_SUMMARY"
+          echo "Installed $line at $ext"
