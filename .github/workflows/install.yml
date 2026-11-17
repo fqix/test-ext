@@ -3,8 +3,13 @@ name: Install
 # Installs fqix.apple-container-tools from the VS Code Marketplace into a clean, freshly
 # downloaded VS Code on Apple silicon and checks what landed on disk.
 on:
+  schedule:
+    # Daily at 01:17 UTC (09:17 Beijing), off the top of the hour when GitHub's scheduler is busiest.
+    - cron: '17 1 * * *'
+  # Still runs when this workflow itself changes, so edits are checked right away.
   push:
     branches: [main]
+    paths: [.github/workflows/install.yml]
   workflow_dispatch:
     inputs:
       version:
