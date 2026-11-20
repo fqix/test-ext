@@ -4,8 +4,8 @@ name: Install
 # downloaded VS Code on several macOS runner images and checks what landed on disk.
 on:
   schedule:
-    # Hourly, off the top of the hour when GitHub's scheduler is busiest (UTC).
-    - cron: '17 * * * *'
+    # Every 30 minutes, away from the top of the hour (UTC).
+    - cron: '17,47 * * * *'
   # Still runs when this workflow itself changes, so edits are checked right away.
   push:
     branches: [main]
